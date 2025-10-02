@@ -1,10 +1,8 @@
 import os
 from math import gcd
-
+import mss
 import numpy as np
 import cv2 as cv
-import dxcam_cpp
-
 
 resolutions_21_by_9 = (
     (2560, 1080),  # WFHD
@@ -31,56 +29,78 @@ class ComputerVision:
     def __init__(self, coords, mask_names, print_detected_resolution=True):
         self.base_resolution = {"width": 1920, "height": 1080}
         self.base_aspect_ratio = self.base_resolution["width"] / self.base_resolution["height"]
-        self.screen = dxcam_cpp.create(max_buffer_len=1)
+        self.print_detected_resolution = print_detected_resolution
 
-        # Detect the user's screen resolution
-        detected_resolution = self.screen.grab().shape[:2]
-        self.final_resolution = {"width": detected_resolution[1], "height": detected_resolution[0]}
+        # Create mss capture object
+        self.sct = mss.mss()
+        monitor = self.sct.monitors[1]  # default to primary monitor
+        self.screenshot_region = monitor
+        self.final_resolution = {"width": monitor["width"], "height": monitor["height"]}
+
+        # Resolution / aspect ratio checks
         self.resolution_mismatch = self.final_resolution != self.base_resolution
-        if print_detected_resolution:
-            print(f"Detected monitor resolution as {self.final_resolution["width"]}x{self.final_resolution["height"]}.")
-        
-        # Detect the user's aspect ratio
+        if self.print_detected_resolution:
+            print(f"Detected monitor resolution as {self.final_resolution['width']}x{self.final_resolution['height']}.")
+
         self.final_aspect_ratio = self.final_resolution["width"] / self.final_resolution["height"]
         self.aspect_ratio_mismatch = self.final_aspect_ratio != self.base_aspect_ratio
         if self.aspect_ratio_mismatch:
-            print(f"Detected monitor aspect ratio as {resolution_to_aspect_ratio_string(self.final_resolution["width"], self.final_resolution["height"])}.")
-            print(f"Please ensure that your in-game aspect ratio is set to {resolution_to_aspect_ratio_string(self.base_resolution["width"], self.base_resolution["height"])}. If it already is, disregard this message.")
+            print(
+                f"Detected monitor aspect ratio as "
+                f"{resolution_to_aspect_ratio_string(self.final_resolution['width'], self.final_resolution['height'])}."
+            )
+            print(
+                f"Please ensure your in-game aspect ratio is set to "
+                f"{resolution_to_aspect_ratio_string(self.base_resolution['width'], self.base_resolution['height'])}."
+            )
 
-            # Calculate how to crop the screenshots to compensate for the monitor's aspect ratio
-            horizontal_padding = abs(round(
-                (self.final_resolution["width"] - self.base_resolution["width"]) // 2
-            ))
-            vertical_padding = abs(round((
-                self.final_resolution["height"] - self.base_resolution["height"]) // 2
-            ))
-            # Used in screenshot[self.aspect_ratio_crop] to the effect of screenshot[vertical_padding:-vertical_padding, horizontal_padding:-horizontal_padding]
-            self.aspect_ratio_crop = np.ix_([vertical_padding, -vertical_padding], [horizontal_padding, -horizontal_padding])
-
-        self.screenshot_region = (0, 0, self.final_resolution["width"], self.final_resolution["height"])
+        # Load templates and masks
         self.coords = coords
-        self.templates = {key: cv.cvtColor(cv.imread(resource_path(f"data\\t_{key}.png")), cv.COLOR_RGB2GRAY) for key in self.coords}
+        self.templates = {
+            key: cv.cvtColor(cv.imread(resource_path(f"data/t_{key}.png")), cv.COLOR_RGB2GRAY) for key in coords
+        }
         self.mask_names = mask_names
-        self.masks = {key: cv.cvtColor(cv.imread(resource_path(f"data\\m_{key}.png")), cv.COLOR_RGB2GRAY) for key in self.mask_names}
+        self.masks = {
+            key: cv.cvtColor(cv.imread(resource_path(f"data/m_{key}.png")), cv.COLOR_RGB2GRAY) for key in mask_names
+        }
         self.frame = []
 
+    def grab_frame(self, monitor=1):
+        screenshot = self.sct.grab(self.sct.monitors[monitor])
+        img = np.array(screenshot)
+        # Convert BGRA → BGR for OpenCV
+        return cv2.cvtColor(img, cv2.COLOR_BGRA2BGR)
+
+
     def start_capturing(self, target_fps=60):
-        self.screen.start(target_fps=target_fps, video_mode=True)
+        # Compatibility shim for old code that expected dxcam_cpp
+        self.capture_frame()
 
     def stop_capturing(self):
-        self.screen.stop()
+        # No-op for compatibility (dxcam_cpp had this)
+        pass
 
     def capture_frame(self):
-        screenshot = self.screen.get_latest_frame()
-        if self.aspect_ratio_mismatch:
-            screenshot = screenshot[self.aspect_ratio_crop]
+        screenshot = self.sct.grab(self.screenshot_region)
+        img = np.array(screenshot)
         if self.resolution_mismatch:
-            screenshot = cv.resize(screenshot, (self.base_resolution["width"], self.base_resolution["height"]))
-        self.frame = cv.cvtColor(screenshot, cv.COLOR_BGR2GRAY)
+            img = cv.resize(img, (self.base_resolution["width"], self.base_resolution["height"]))
+        self.frame = cv.cvtColor(img, cv.COLOR_BGR2GRAY)
+
+        self.resolution_mismatch = self.final_resolution != self.base_resolution
+        if self.print_detected_resolution:
+            print(f"Detected monitor resolution as {self.final_resolution['width']}x{self.final_resolution['height']}.")
+
+        self.final_aspect_ratio = self.final_resolution["width"] / self.final_resolution["height"]
+        self.aspect_ratio_mismatch = self.final_aspect_ratio != self.base_aspect_ratio
+        if self.aspect_ratio_mismatch:
+            print(f"Detected monitor aspect ratio as {resolution_to_aspect_ratio_string(self.final_resolution['width'], self.final_resolution['height'])}.")
+            print(f"Please ensure your in-game aspect ratio is set to {resolution_to_aspect_ratio_string(self.base_resolution['width'], self.base_resolution['height'])}.")
 
     def crop(self, image, template_name, coords_override=None):
         if coords_override is None:
-            return image[self.coords[template_name][0]:self.coords[template_name][1], self.coords[template_name][2]:self.coords[template_name][3]]
+            return image[self.coords[template_name][0]:self.coords[template_name][1],
+                         self.coords[template_name][2]:self.coords[template_name][3]]
         else:
             return image[coords_override[0]:coords_override[1], coords_override[2]:coords_override[3]]
 
@@ -93,7 +113,7 @@ class ComputerVision:
 
     def detect_multiple(self, template_name, threshold=0.9):
         result = self.match(template_name)
-        cv.threshold(result, threshold, 255, cv.THRESH_BINARY, result)
+        _, result = cv.threshold(result, threshold, 255, cv.THRESH_BINARY)
         return len(cv.findContours(result.astype(np.uint8), cv.RETR_LIST, cv.CHAIN_APPROX_SIMPLE)[0])
 
     def detect_single(self, template_name, threshold=0.9, coords_override=None):

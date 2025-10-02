@@ -1,5 +1,4 @@
 import configparser
-import winsound
 import logging
 import asyncio
 import json
@@ -23,7 +22,7 @@ def resource_path(relative_path):
 def kill_other_overstim_instances():
     current_pid = os.getpid()
     for p in ps.process_iter():
-        is_instance_of_overstim = re.search("OverStim_v\\d{1,3}\\.\\d{1,3}\\.\\d{1,3}\\.exe$", p.name())
+        is_instance_of_overstim = is_instance_of_overstim = re.search(r"OverStim(_v\d+\.\d+\.\d+)?", p.name(), re.IGNORECASE)
         if is_instance_of_overstim:
             is_this_instance = (p.pid == current_pid)
             if not is_this_instance:
@@ -288,7 +287,7 @@ class VibeManager:
 
                 window["-CURRENT_INTENSITY-"].update(str(int(self.current_intensity * 100)) + ("%" if self.current_intensity == self.real_intensity else f"% (max {int(MAX_VIBE_INTENSITY * 100)}%)"))
                 if BEEP_ENABLED:
-                    winsound.Beep(int(1000 + (self.real_intensity * 5000)), 20)
+                    beep(int(1000 + (self.real_intensity * 5000)), 20)
 
 
 async def run_overstim():
@@ -641,7 +640,7 @@ async def main():
         window["-PROGRAM_STATUS-"].update("CRITICAL ERROR")
         print(f"CRITICAL ERROR OCCURRED\nError caught: {ex}")
         if BEEP_ENABLED:
-            winsound.Beep(1000, 500)
+            beep(1000, 500)
         event, values = window.read()
         if event == sg.WIN_CLOSED or event == "Quit":
             window["Stop"].update(disabled=True)
